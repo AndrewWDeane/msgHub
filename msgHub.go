@@ -20,7 +20,7 @@ import (
 	"ad/msgHub/sock"
 )
 
-var version = "1.0.0"
+var version = "1.1.0"
 var logger *log.Logger = log.New(os.Stdout, "", log.Ldate+log.Lmicroseconds)
 var msgMap map[string]interface{}
 
@@ -65,7 +65,10 @@ func main() {
 						if msgType := storage[typeValue]; msgType != nil {
 							if key := msgType[keyValue]; key != nil {
 								for _, sub := range key {
-									sub.RespCh <- msg.Msg
+									// start goroutines so one blocking client doesn't stop all
+									go func(c chan []byte, m []byte) {
+										c <- m
+									}(sub.RespCh, msg.Msg)
 								}
 							}
 						}

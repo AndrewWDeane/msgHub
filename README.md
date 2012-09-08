@@ -17,4 +17,4 @@ JSON message format:
 {"event": "unsub",	"type": "messageType",	"key": "messageKey",		"id": "optional id. used for same sub down same tcp client"}
 {"event": "pub",	"type": "messageType",	"key": "messageKey",		........ any json data}
 
-
+Built file is linux64
