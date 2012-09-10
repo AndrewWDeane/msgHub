@@ -13,9 +13,9 @@ msgHub -tcpPort=12345 -tcpDelimiter=10
 
 JSON message format:
 
-{"event": "sub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional",   "id": "optional id. used for same sub down same tcp client" "echoFields": "optional. JSON will be echoed back to the client with any message"}
+{"event": "sub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional. may be wildcard",   "id": "optional id. used for same sub down same tcp client" "echoFields": "optional. JSON will be echoed back to the client with any message"}
 
-{"event": "unsub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional",   "id": "optional id. used for same sub down same tcp client"}
+{"event": "unsub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional. may be wildcard",   "id": "optional id. used for same sub down same tcp client"}
 
 {"event": "pub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional",   ........ any json data}
 

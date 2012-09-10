@@ -1,8 +1,8 @@
 // msgHub - serve TCP port, accept subcriptions and route publications onto required clients
 
 // JSON message format:
-// {"event": "sub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional string", 	"id": "optional id. used for same sub down same tcp client" "echoFields": "optional any JSON to be echo back to the client"}
-// {"event": "unsub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional string", 	"id": "optional id. used for same sub down same tcp client"}
+// {"event": "sub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional string. may be wildcard", 	"id": "optional id. used for same sub down same tcp client" "echoFields": "optional any JSON to be echo back to the client"}
+// {"event": "unsub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional string. may be wildcard", 	"id": "optional id. used for same sub down same tcp client"}
 // {"event": "pub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional string", 	........ any json data}
 
 package main
@@ -20,7 +20,7 @@ import (
 	"ad/msgHub/sock"
 )
 
-var version = "1.4.1"
+var version = "1.5.1"
 var logger *log.Logger = log.New(os.Stdout, "", log.Ldate+log.Lmicroseconds)
 var msgMap map[string]interface{}
 
@@ -66,18 +66,10 @@ func main() {
 						if msgType := storage[typeValue]; msgType != nil {
 							if key := msgType[keyValue]; key != nil {
 								if subkey := key[subkeyValue]; subkey != nil {
-									for _, sub := range subkey {
-
-										if sub.EchoFields != nil {
-											msgMap["echoFields"] = sub.EchoFields
-											msg.Msg, _ = json.Marshal(msgMap)
-										}
-
-										// start goroutines so one blocking client doesn't stop all
-										go func(c chan []byte, m []byte) {
-											c <- m
-										}(sub.RespCh, msg.Msg)
-									}
+									send(msg, subkey)
+								}
+								if subkey := key["*"]; subkey != nil {
+									send(msg, subkey)
 								}
 							}
 						}
@@ -119,6 +111,22 @@ func main() {
 				}
 			}
 		}
+	}
+
+}
+
+func send(msg sock.ByteMessage, subkey map[string]Subscription) {
+	for _, sub := range subkey {
+
+		if sub.EchoFields != nil {
+			msgMap["echoFields"] = sub.EchoFields
+			msg.Msg, _ = json.Marshal(msgMap)
+		}
+
+		// start goroutines so one blocking client doesn't stop all
+		go func(c chan []byte, m []byte) {
+			c <- m
+		}(sub.RespCh, msg.Msg)
 	}
 
 }
