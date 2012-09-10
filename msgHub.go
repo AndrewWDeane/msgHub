@@ -1,13 +1,14 @@
 // msgHub - serve TCP port, accept subcriptions and route publications onto required clients
 
 // JSON message format:
-// {"event": "sub",	"type": "messageType",	"key": "messageKey",		"id": "optional id. used for same sub down same tcp client"}
+// {"event": "sub",	"type": "messageType",	"key": "messageKey",		"id": "optional id. used for same sub down same tcp client" "echoFields": "optional any JSON to be echo back to the client"}
 // {"event": "unsub",	"type": "messageType",	"key": "messageKey",		"id": "optional id. used for same sub down same tcp client"}
 // {"event": "pub",	"type": "messageType",	"key": "messageKey",		........ any json data}
 
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -20,12 +21,13 @@ import (
 	"ad/msgHub/sock"
 )
 
-var version = "1.1.0"
+var version = "1.2.1"
 var logger *log.Logger = log.New(os.Stdout, "", log.Ldate+log.Lmicroseconds)
 var msgMap map[string]interface{}
 
 type Subscription struct {
-	RespCh chan []byte
+	RespCh     chan []byte
+	EchoFields []byte
 }
 
 func main() {
@@ -65,10 +67,14 @@ func main() {
 						if msgType := storage[typeValue]; msgType != nil {
 							if key := msgType[keyValue]; key != nil {
 								for _, sub := range key {
+
+									buf := bytes.NewBuffer(msg.Msg)
+									_ = json.Compact(buf, sub.EchoFields)
+
 									// start goroutines so one blocking client doesn't stop all
 									go func(c chan []byte, m []byte) {
 										c <- m
-									}(sub.RespCh, msg.Msg)
+									}(sub.RespCh, buf.Bytes())
 								}
 							}
 						}
@@ -76,6 +82,7 @@ func main() {
 					case "sub", "unsub":
 						// append the messages remote address to the id for uniqueness
 						idValue += fmt.Sprintf("|%v", msg.RemoteAddr.String())
+						logger.Println("id", idValue)
 
 						msgType := storage[typeValue]
 						if msgType == nil {
@@ -88,14 +95,18 @@ func main() {
 						}
 
 						if event == "sub" {
-							key[idValue] = Subscription{RespCh: msg.RespCh}
+							var echoBytes []byte
+							if echoFields := msgMap["echoFields"]; echoFields != nil {
+								// no need to check the error as it would have failed the initial unmarshal
+								echoBytes, _ = json.Marshal(echoFields)
+							}
+							key[idValue] = Subscription{RespCh: msg.RespCh, EchoFields: echoBytes}
 						} else {
 							delete(key, idValue)
 						}
 
 						msgType[keyValue] = key
 						storage[typeValue] = msgType
-						//logger.Printf("%v for [%v][%v][%v]", event, typeValue, keyValue, idValue)
 
 					case "admin":
 						// do admin

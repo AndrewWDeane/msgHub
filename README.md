@@ -13,8 +13,10 @@ msgHub -tcpPort=12345 -tcpDelimiter=10
 
 JSON message format:
 
-{"event": "sub",	"type": "messageType",	"key": "messageKey",		"id": "optional id. used for same sub down same tcp client"}
+{"event": "sub",	"type": "messageType",	"key": "messageKey",		"id": "optional id. used for same sub down same tcp client" "echoFields": "optional. JSON will be echoed back to the client with any message"}
+
 {"event": "unsub",	"type": "messageType",	"key": "messageKey",		"id": "optional id. used for same sub down same tcp client"}
+
 {"event": "pub",	"type": "messageType",	"key": "messageKey",		........ any json data}
 
 Built file is linux64
