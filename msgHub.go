@@ -21,7 +21,7 @@ import (
 	"ad/msgHub/sock"
 )
 
-var version = "1.2.1"
+var version = "1.2.2"
 var logger *log.Logger = log.New(os.Stdout, "", log.Ldate+log.Lmicroseconds)
 var msgMap map[string]interface{}
 
@@ -82,7 +82,6 @@ func main() {
 					case "sub", "unsub":
 						// append the messages remote address to the id for uniqueness
 						idValue += fmt.Sprintf("|%v", msg.RemoteAddr.String())
-						logger.Println("id", idValue)
 
 						msgType := storage[typeValue]
 						if msgType == nil {
