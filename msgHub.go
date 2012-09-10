@@ -20,7 +20,7 @@ import (
 	"ad/msgHub/sock"
 )
 
-var version = "1.3.0"
+var version = "1.4.0"
 var logger *log.Logger = log.New(os.Stdout, "", log.Ldate+log.Lmicroseconds)
 var msgMap map[string]interface{}
 
@@ -50,7 +50,7 @@ func main() {
 	tcp := make(chan sock.ByteMessage, sock.ChannelBuffer)
 	go sock.ServeTCPChannel(fmt.Sprintf("%v:%v", host, tcpPort), tcpDelimiter, tcp)
 
-	storage := make(map[string]map[string]map[string]Subscription)
+	storage := make(map[string]map[string]map[string]map[string]Subscription)
 
 	for {
 		select {
@@ -59,23 +59,25 @@ func main() {
 			if err := json.Unmarshal(msg.Msg, &msgMap); err == nil {
 				logger.Println("tcp:", msg.RemoteAddr, msgMap)
 
-				if typeValue, keyValue, idValue, e := initialParse(); e == nil {
+				if typeValue, keyValue, subkeyValue, idValue, e := initialParse(); e == nil {
 					event := msgMap["event"]
 					switch event {
 					case "pub":
 						if msgType := storage[typeValue]; msgType != nil {
 							if key := msgType[keyValue]; key != nil {
-								for _, sub := range key {
+								if subkey := key[subkeyValue]; subkey != nil {
+									for _, sub := range subkey {
 
-									if sub.EchoFields != nil {
-										msgMap["echoFields"] = sub.EchoFields
-										msg.Msg, _ = json.Marshal(msgMap)
+										if sub.EchoFields != nil {
+											msgMap["echoFields"] = sub.EchoFields
+											msg.Msg, _ = json.Marshal(msgMap)
+										}
+
+										// start goroutines so one blocking client doesn't stop all
+										go func(c chan []byte, m []byte) {
+											c <- m
+										}(sub.RespCh, msg.Msg)
 									}
-
-									// start goroutines so one blocking client doesn't stop all
-									go func(c chan []byte, m []byte) {
-										c <- m
-									}(sub.RespCh, msg.Msg)
 								}
 							}
 						}
@@ -86,20 +88,26 @@ func main() {
 
 						msgType := storage[typeValue]
 						if msgType == nil {
-							msgType = make(map[string]map[string]Subscription)
+							msgType = make(map[string]map[string]map[string]Subscription)
 						}
 
 						key := msgType[keyValue]
 						if key == nil {
-							key = make(map[string]Subscription)
+							key = make(map[string]map[string]Subscription)
+						}
+
+						subkey := key[subkeyValue]
+						if subkey == nil {
+							subkey = make(map[string]Subscription)
 						}
 
 						if event == "sub" {
-							key[idValue] = Subscription{RespCh: msg.RespCh, EchoFields: msgMap["echoFields"]}
+							subkey[idValue] = Subscription{RespCh: msg.RespCh, EchoFields: msgMap["echoFields"]}
 						} else {
-							delete(key, idValue)
+							delete(subkey, idValue)
 						}
 
+						key[subkeyValue] = subkey
 						msgType[keyValue] = key
 						storage[typeValue] = msgType
 
@@ -115,7 +123,7 @@ func main() {
 
 }
 
-func initialParse() (t string, k string, i string, e error) {
+func initialParse() (t, k, s, i string, e error) {
 	defer func() {
 		if i := recover(); i != nil {
 			e = errors.New(fmt.Sprintf("%v", i))
@@ -125,23 +133,27 @@ func initialParse() (t string, k string, i string, e error) {
 	t = msgMap["type"].(string)
 	k = msgMap["key"].(string)
 
-	// id is optional, so deal with it on its own
+	// optional fields, so deal with them on their own
 	var err error
-	i, err = parseID()
+	i, err = parseExtra("id")
 	if err != nil {
 		i = ""
+	}
+	s, err = parseExtra("subkey")
+	if err != nil {
+		s = ""
 	}
 
 	return
 }
 
-func parseID() (i string, e error) {
+func parseExtra(key string) (i string, e error) {
 	defer func() {
 		if i := recover(); i != nil {
 			e = errors.New(fmt.Sprintf("%v", i))
 		}
 	}()
 
-	i = msgMap["id"].(string)
+	i = msgMap[key].(string)
 	return
 }
