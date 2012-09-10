@@ -8,7 +8,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -21,13 +20,13 @@ import (
 	"ad/msgHub/sock"
 )
 
-var version = "1.2.2"
+var version = "1.3.0"
 var logger *log.Logger = log.New(os.Stdout, "", log.Ldate+log.Lmicroseconds)
 var msgMap map[string]interface{}
 
 type Subscription struct {
 	RespCh     chan []byte
-	EchoFields []byte
+	EchoFields interface{}
 }
 
 func main() {
@@ -68,13 +67,15 @@ func main() {
 							if key := msgType[keyValue]; key != nil {
 								for _, sub := range key {
 
-									buf := bytes.NewBuffer(msg.Msg)
-									_ = json.Compact(buf, sub.EchoFields)
+									if sub.EchoFields != nil {
+										msgMap["echoFields"] = sub.EchoFields
+										msg.Msg, _ = json.Marshal(msgMap)
+									}
 
 									// start goroutines so one blocking client doesn't stop all
 									go func(c chan []byte, m []byte) {
 										c <- m
-									}(sub.RespCh, buf.Bytes())
+									}(sub.RespCh, msg.Msg)
 								}
 							}
 						}
@@ -94,12 +95,7 @@ func main() {
 						}
 
 						if event == "sub" {
-							var echoBytes []byte
-							if echoFields := msgMap["echoFields"]; echoFields != nil {
-								// no need to check the error as it would have failed the initial unmarshal
-								echoBytes, _ = json.Marshal(echoFields)
-							}
-							key[idValue] = Subscription{RespCh: msg.RespCh, EchoFields: echoBytes}
+							key[idValue] = Subscription{RespCh: msg.RespCh, EchoFields: msgMap["echoFields"]}
 						} else {
 							delete(key, idValue)
 						}
