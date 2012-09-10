@@ -1,9 +1,9 @@
 // msgHub - serve TCP port, accept subcriptions and route publications onto required clients
 
 // JSON message format:
-// {"event": "sub",	"type": "messageType",	"key": "messageKey",		"id": "optional id. used for same sub down same tcp client" "echoFields": "optional any JSON to be echo back to the client"}
-// {"event": "unsub",	"type": "messageType",	"key": "messageKey",		"id": "optional id. used for same sub down same tcp client"}
-// {"event": "pub",	"type": "messageType",	"key": "messageKey",		........ any json data}
+// {"event": "sub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional string", 	"id": "optional id. used for same sub down same tcp client" "echoFields": "optional any JSON to be echo back to the client"}
+// {"event": "unsub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional string", 	"id": "optional id. used for same sub down same tcp client"}
+// {"event": "pub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional string", 	........ any json data}
 
 package main
 
@@ -20,7 +20,7 @@ import (
 	"ad/msgHub/sock"
 )
 
-var version = "1.4.0"
+var version = "1.4.1"
 var logger *log.Logger = log.New(os.Stdout, "", log.Ldate+log.Lmicroseconds)
 var msgMap map[string]interface{}
 
