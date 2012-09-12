@@ -20,7 +20,7 @@ import (
 	"ad/msgHub/sock"
 )
 
-var version = "1.5.1"
+var version = "1.6.0"
 var logger *log.Logger = log.New(os.Stdout, "", log.Ldate+log.Lmicroseconds)
 var msgMap map[string]interface{}
 
@@ -118,15 +118,24 @@ func main() {
 func send(msg sock.ByteMessage, subkey map[string]Subscription) {
 	for _, sub := range subkey {
 
+		output := msg.Msg
+
 		if sub.EchoFields != nil {
+			// careful now; msgMap is a global
 			msgMap["echoFields"] = sub.EchoFields
-			msg.Msg, _ = json.Marshal(msgMap)
+			output, _ = json.Marshal(msgMap)
+			delete(msgMap, "echoFields")
 		}
+
+		// TODO - batch the output as an array on sub
+		// output if cap met
+		// spin up a time.After to output after t time (what about access to the sub though? sub holds the chan to goroutine that will output to tcp chan After so that more data can be added to output array)
+		// check to see what arrays output as in terms of JSON
 
 		// start goroutines so one blocking client doesn't stop all
 		go func(c chan []byte, m []byte) {
 			c <- m
-		}(sub.RespCh, msg.Msg)
+		}(sub.RespCh, output)
 	}
 
 }
