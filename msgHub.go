@@ -20,9 +20,13 @@ import (
 	"ad/msgHub/sock"
 )
 
-var version = "1.6.0"
+var version = "1.7.0"
 var logger *log.Logger = log.New(os.Stdout, "", log.Ldate+log.Lmicroseconds)
 var msgMap map[string]interface{}
+
+type Data struct {
+	Batch []map[string]interface{}
+}
 
 type Subscription struct {
 	RespCh     chan []byte
@@ -30,6 +34,9 @@ type Subscription struct {
 }
 
 func main() {
+
+	batching := true
+	batchBuffer := 1024
 
 	sock.Logger = logger
 	runtime.GOMAXPROCS(runtime.NumCPU())
@@ -94,9 +101,38 @@ func main() {
 						}
 
 						if event == "sub" {
-							subkey[idValue] = Subscription{RespCh: msg.RespCh, EchoFields: msgMap["echoFields"]}
+							sub := Subscription{RespCh: msg.RespCh, EchoFields: msgMap["echoFields"]}
+
+							if batching {
+								batcher := make(chan []byte, batchBuffer)
+								go func(toTCP, toBatcher chan []byte) {
+									for {
+										select {
+										case m := <-toBatcher:
+											if m == nil {
+												return
+											}
+
+											// TODO create Batch and fill to cap or Time.After()
+
+											toTCP <- m
+										}
+									}
+
+								}(sub.RespCh, batcher)
+
+								sub.RespCh = batcher
+							}
+
+							subkey[idValue] = sub
+
 						} else {
-							delete(subkey, idValue)
+							if sub, ok := subkey[idValue]; ok {
+								if batching {
+									sub.RespCh <- nil
+								}
+								delete(subkey, idValue)
+							}
 						}
 
 						key[subkeyValue] = subkey
@@ -126,11 +162,6 @@ func send(msg sock.ByteMessage, subkey map[string]Subscription) {
 			output, _ = json.Marshal(msgMap)
 			delete(msgMap, "echoFields")
 		}
-
-		// TODO - batch the output as an array on sub
-		// output if cap met
-		// spin up a time.After to output after t time (what about access to the sub though? sub holds the chan to goroutine that will output to tcp chan After so that more data can be added to output array)
-		// check to see what arrays output as in terms of JSON
 
 		// start goroutines so one blocking client doesn't stop all
 		go func(c chan []byte, m []byte) {
