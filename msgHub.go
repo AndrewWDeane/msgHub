@@ -16,11 +16,12 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"time"
 	"ad/msgHub/enc"
 	"ad/msgHub/sock"
 )
 
-var version = "1.7.0"
+var version = "1.7.3"
 var logger *log.Logger = log.New(os.Stdout, "", log.Ldate+log.Lmicroseconds)
 var msgMap map[string]interface{}
 
@@ -35,8 +36,11 @@ type Subscription struct {
 
 func main() {
 
+	// TODO take these from flags
 	batching := true
 	batchBuffer := 1024
+	batchingTimeOut, _ := time.ParseDuration("10s")
+	batchSize := 2
 
 	sock.Logger = logger
 	runtime.GOMAXPROCS(runtime.NumCPU())
@@ -106,6 +110,10 @@ func main() {
 							if batching {
 								batcher := make(chan []byte, batchBuffer)
 								go func(toTCP, toBatcher chan []byte) {
+
+									batch := Data{Batch: make([]map[string]interface{}, batchSize)}
+									pos := 0
+
 									for {
 										select {
 										case m := <-toBatcher:
@@ -113,9 +121,29 @@ func main() {
 												return
 											}
 
-											// TODO create Batch and fill to cap or Time.After()
+											// TODO
+											// Just how expensive is this back and forth between bytes and JSON ???
+											// Custom JSON parse to remove the nulls (on the timeout section)
+											// put dup code into func
 
-											toTCP <- m
+											_ = json.Unmarshal(m, &batch.Batch[pos])
+											pos += 1
+											if pos == batchSize {
+												// flush
+												b, _ := json.Marshal(batch)
+												toTCP <- b
+												batch.Batch = make([]map[string]interface{}, batchSize)
+												pos = 0
+											}
+
+										case _ = <-time.After(batchingTimeOut):
+											if batch.Batch[0] != nil {
+												//flush
+												b, _ := json.Marshal(batch)
+												toTCP <- b
+												batch.Batch = make([]map[string]interface{}, batchSize)
+												pos = 0
+											}
 										}
 									}
 
