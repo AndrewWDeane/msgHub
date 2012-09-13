@@ -21,7 +21,12 @@ import (
 	"ad/msgHub/sock"
 )
 
-var version = "1.7.3"
+// TODO                                                                                       
+// support lists on type and key                                                              
+// Remove subs when connection is dropped - need to clean up the batching goroutines and maps
+// push batching onto the TCP connection from the subscription
+
+var version = "1.8.0"
 var logger *log.Logger = log.New(os.Stdout, "", log.Ldate+log.Lmicroseconds)
 var msgMap map[string]interface{}
 
@@ -36,27 +41,39 @@ type Subscription struct {
 
 func main() {
 
-	// TODO take these from flags
-	batching := true
-	batchBuffer := 1024
-	batchingTimeOut, _ := time.ParseDuration("10s")
-	batchSize := 2
-
 	sock.Logger = logger
 	runtime.GOMAXPROCS(runtime.NumCPU())
 	logger.Println("msgHub", version)
 
 	df := flag.Int("tcpDelimiter", 10, "TCP message delimiter")
 	tf := flag.Int("tcpPort", 0, "TCP port")
+	bf := flag.Bool("batchOutput", true, "Batch output")
+	bsf := flag.Int("batchSize", 1024, "Output batch size")
+	btf := flag.String("batchTimeout", "1s", "Batch timeout")
+	bbf := flag.Int("batchingBuffer", 1024, "Batch buffer size")
 
 	flag.Parse()
 
 	tcpDelimiter := enc.EncByte(*df)
 	tcpPort := *tf
+	batching := *bf
+	batchBuffer := *bbf
+	batchSize := *bsf
+
+	var batchingTimeOut time.Duration
+	var err error
+
+	if batchingTimeOut, err = time.ParseDuration(*btf); err != nil {
+		batchingTimeOut, _ = time.ParseDuration("1s")
+	}
 
 	hostname, _ := os.Hostname()
 	host, _ := net.LookupHost(hostname)
 	logger.Println("Serving on:", host, tcpPort)
+
+	if batching {
+		logger.Printf("Batching: size %v timeout %v buffer %v\n", batchSize, batchingTimeOut, batchBuffer)
+	}
 
 	tcp := make(chan sock.ByteMessage, sock.ChannelBuffer)
 	go sock.ServeTCPChannel(fmt.Sprintf("%v:%v", host, tcpPort), tcpDelimiter, tcp)
@@ -121,15 +138,11 @@ func main() {
 												return
 											}
 
-											// TODO
 											// Just how expensive is this back and forth between bytes and JSON ???
-											// Custom JSON parse to remove the nulls (on the timeout section)
-											// put dup code into func
-
 											_ = json.Unmarshal(m, &batch.Batch[pos])
 											pos += 1
 											if pos == batchSize {
-												// flush
+												// flush - all
 												b, _ := json.Marshal(batch)
 												toTCP <- b
 												batch.Batch = make([]map[string]interface{}, batchSize)
@@ -138,7 +151,8 @@ func main() {
 
 										case _ = <-time.After(batchingTimeOut):
 											if batch.Batch[0] != nil {
-												//flush
+												//flush - up to the populated element by slicing
+												batch.Batch = batch.Batch[0:pos]
 												b, _ := json.Marshal(batch)
 												toTCP <- b
 												batch.Batch = make([]map[string]interface{}, batchSize)

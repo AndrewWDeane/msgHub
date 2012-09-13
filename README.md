@@ -20,3 +20,12 @@ JSON message format:
 {"event": "pub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional",   ........ any json data}
 
 Built file is linux64
+
+Usage of msgHub:
+  -batchOutput=true: Batch output
+  -batchSize=1024: Output batch size
+  -batchTimeout="1s": Batch timeout
+  -batchingBuffer=1024: Batch buffer size
+  -tcpDelimiter=10: TCP message delimiter
+  -tcpPort=0: TCP port
+
