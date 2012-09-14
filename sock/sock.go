@@ -17,6 +17,7 @@ type ByteMessage struct {
 	Msg        []byte
 	RemoteAddr net.Addr
 	RespCh     chan []byte
+	Disconnect bool
 }
 
 // Serve TCP socket at given address, Supply destination channel  for all socket messages.
@@ -33,7 +34,8 @@ func ServeTCPChannel(addr string, delimiter []byte, toClient chan ByteMessage) e
 
 	for {
 		if conn, err := ln.AcceptTCP(); err == nil {
-			Logger.Println("Connection:", conn.RemoteAddr())
+			remote := conn.RemoteAddr()
+			Logger.Println("Connection:", remote)
 
 			go func() {
 				toTCP := make(chan []byte, ChannelBuffer)
@@ -51,8 +53,10 @@ func ServeTCPChannel(addr string, delimiter []byte, toClient chan ByteMessage) e
 
 				}()
 
-				go WriteTCPChannel(conn, delimiter, toTCP)
-				ReadTCPChannel(conn, delimiter, fromTCP)
+				go ReadTCPChannel(conn, delimiter, fromTCP)
+				WriteTCPChannel(conn, delimiter, toTCP)
+				// if we get here then write has returned as the connection has dropped on write), so send msg toClient to make client tidy up
+				toClient <- ByteMessage{RemoteAddr: remote, Disconnect: true}
 
 			}()
 		} else {
@@ -75,7 +79,7 @@ func ReadTCPChannel(conn *net.TCPConn, delimiter []byte, fromSocket chan ByteMes
 			if n == 0 && err == nil {
 				err = errors.New("No bytes")
 			}
-			Logger.Println("Closing:", conn.RemoteAddr(), err)
+			Logger.Println("Closing read:", conn.RemoteAddr(), err)
 			conn.Close()
 			return err
 		} else {
@@ -107,7 +111,7 @@ func WriteTCPChannel(conn *net.TCPConn, delimiter []byte, toSocket chan []byte) 
 		} else {
 			message = append(message, delimiter...)
 			if _, err := conn.Write(message); err != nil {
-				Logger.Println("Closing:", conn.RemoteAddr(), err)
+				Logger.Println("Closing write:", conn.RemoteAddr(), err)
 				conn.Close()
 				return err
 			}

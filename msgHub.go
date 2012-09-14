@@ -5,6 +5,8 @@
 // {"event": "unsub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional string. may be wildcard", 	"id": "optional id. used for same sub down same tcp client"}
 // {"event": "pub",	"type": "messageType",	"key": "messageKey",		"subkey": "optional string", 	........ any json data}
 
+// {"event": "admin", "printStack": "yes", "type": "", "key": ""}
+
 package main
 
 import (
@@ -16,17 +18,17 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"time"
 	"ad/msgHub/enc"
 	"ad/msgHub/sock"
 )
 
-// TODO                                                                                       
-// support lists on type and key                                                              
-// Remove subs when connection is dropped - need to clean up the batching goroutines and maps
-// push batching onto the TCP connection from the subscription
+// TODO 
+// support lists on type and key
+// push batching onto TCP???
 
-var version = "1.8.0"
+var version = "1.8.2"
 var logger *log.Logger = log.New(os.Stdout, "", log.Ldate+log.Lmicroseconds)
 var msgMap map[string]interface{}
 
@@ -83,114 +85,149 @@ func main() {
 	for {
 		select {
 		case msg := <-tcp:
-			msgMap = nil
-			if err := json.Unmarshal(msg.Msg, &msgMap); err == nil {
-				logger.Println("tcp:", msg.RemoteAddr, msgMap)
+			if msg.Disconnect {
+				// disconnected - tidy up any subs
+				msgMap["event"] = "unsub"
+				for _, t := range storage {
+					for _, k := range t {
+						for _, sk := range k {
+							for id, s := range sk {
+								a := strings.Split(id, "|")
+								if a[1] == msg.RemoteAddr.String() {
+									if batching {
+										s.RespCh <- nil
+									}
+									delete(sk, id)
+								}
 
-				if typeValue, keyValue, subkeyValue, idValue, e := initialParse(); e == nil {
-					event := msgMap["event"]
-					switch event {
-					case "pub":
-						if msgType := storage[typeValue]; msgType != nil {
-							if key := msgType[keyValue]; key != nil {
-								if subkey := key[subkeyValue]; subkey != nil {
-									send(msg, subkey)
-								}
-								if subkey := key["*"]; subkey != nil {
-									send(msg, subkey)
-								}
 							}
 						}
+					}
+				}
+			} else {
+				msgMap = nil
+				if err := json.Unmarshal(msg.Msg, &msgMap); err == nil {
+					logger.Println("tcp:", msg.RemoteAddr, msgMap)
 
-					case "sub", "unsub":
-						// append the messages remote address to the id for uniqueness
-						idValue += fmt.Sprintf("|%v", msg.RemoteAddr.String())
+					if typeValue, keyValue, subkeyValue, idValue, e := initialParse(); e == nil {
+						event := msgMap["event"]
+						switch event {
+						case "pub":
+							if msgType := storage[typeValue]; msgType != nil {
+								if key := msgType[keyValue]; key != nil {
+									if subkey := key[subkeyValue]; subkey != nil {
+										send(msg, subkey)
+									}
+									if subkey := key["*"]; subkey != nil {
+										send(msg, subkey)
+									}
+								}
+							}
 
-						msgType := storage[typeValue]
-						if msgType == nil {
-							msgType = make(map[string]map[string]map[string]Subscription)
-						}
+						case "sub", "unsub":
+							// append the messages remote address to the id for uniqueness
+							idValue += fmt.Sprintf("|%v", msg.RemoteAddr.String())
 
-						key := msgType[keyValue]
-						if key == nil {
-							key = make(map[string]map[string]Subscription)
-						}
+							msgType := storage[typeValue]
+							if msgType == nil {
+								msgType = make(map[string]map[string]map[string]Subscription)
+							}
 
-						subkey := key[subkeyValue]
-						if subkey == nil {
-							subkey = make(map[string]Subscription)
-						}
+							key := msgType[keyValue]
+							if key == nil {
+								key = make(map[string]map[string]Subscription)
+							}
 
-						if event == "sub" {
-							sub := Subscription{RespCh: msg.RespCh, EchoFields: msgMap["echoFields"]}
+							subkey := key[subkeyValue]
+							if subkey == nil {
+								subkey = make(map[string]Subscription)
+							}
 
-							if batching {
-								batcher := make(chan []byte, batchBuffer)
-								go func(toTCP, toBatcher chan []byte) {
+							if event == "sub" {
+								sub := Subscription{RespCh: msg.RespCh, EchoFields: msgMap["echoFields"]}
 
-									batch := Data{Batch: make([]map[string]interface{}, batchSize)}
-									pos := 0
+								if batching {
+									batcher := make(chan []byte, batchBuffer)
+									go func(toTCP, toBatcher chan []byte) {
 
-									for {
-										select {
-										case m := <-toBatcher:
-											if m == nil {
-												return
-											}
+										batch := Data{Batch: make([]map[string]interface{}, batchSize)}
+										pos := 0
 
-											// Just how expensive is this back and forth between bytes and JSON ???
-											_ = json.Unmarshal(m, &batch.Batch[pos])
-											pos += 1
-											if pos == batchSize {
-												// flush - all
-												b, _ := json.Marshal(batch)
-												toTCP <- b
-												batch.Batch = make([]map[string]interface{}, batchSize)
-												pos = 0
-											}
+										for {
+											select {
+											case m := <-toBatcher:
+												if m == nil {
+													return
+												}
 
-										case _ = <-time.After(batchingTimeOut):
-											if batch.Batch[0] != nil {
-												//flush - up to the populated element by slicing
-												batch.Batch = batch.Batch[0:pos]
-												b, _ := json.Marshal(batch)
-												toTCP <- b
-												batch.Batch = make([]map[string]interface{}, batchSize)
-												pos = 0
+												// Just how expensive is this back and forth between bytes and JSON ???
+												_ = json.Unmarshal(m, &batch.Batch[pos])
+												pos += 1
+												if pos == batchSize {
+													// flush - all
+													b, _ := json.Marshal(batch)
+													toTCP <- b
+													batch.Batch = make([]map[string]interface{}, batchSize)
+													pos = 0
+												}
+
+											case _ = <-time.After(batchingTimeOut):
+												if batch.Batch[0] != nil {
+													//flush - up to the populated element by slicing
+													batch.Batch = batch.Batch[0:pos]
+													b, _ := json.Marshal(batch)
+													toTCP <- b
+													batch.Batch = make([]map[string]interface{}, batchSize)
+													pos = 0
+												}
 											}
 										}
+
+									}(sub.RespCh, batcher)
+
+									sub.RespCh = batcher
+								}
+
+								subkey[idValue] = sub
+
+							} else {
+								if sub, ok := subkey[idValue]; ok {
+									if batching {
+										sub.RespCh <- nil
 									}
-
-								}(sub.RespCh, batcher)
-
-								sub.RespCh = batcher
+									delete(subkey, idValue)
+								}
 							}
 
-							subkey[idValue] = sub
+							key[subkeyValue] = subkey
+							msgType[keyValue] = key
+							storage[typeValue] = msgType
 
-						} else {
-							if sub, ok := subkey[idValue]; ok {
-								if batching {
-									sub.RespCh <- nil
-								}
-								delete(subkey, idValue)
+						case "admin":
+							// do admin
+							if msgMap["printStack"] == "yes" {
+								PrintStack(true)
 							}
 						}
-
-						key[subkeyValue] = subkey
-						msgType[keyValue] = key
-						storage[typeValue] = msgType
-
-					case "admin":
-						// do admin
+					} else {
+						logger.Println(e)
 					}
-				} else {
-					logger.Println(e)
 				}
 			}
 		}
 	}
 
+}
+
+//Print current stack trace
+func PrintStack(all bool) {
+	buffer := make([]byte, 10240)
+	numB := runtime.Stack(buffer, all)
+	logger.Printf("%v current goroutines\n", runtime.NumGoroutine())
+	if numB > 10240 {
+		numB = 10240
+	}
+	logger.Println(string(buffer[0:numB]))
 }
 
 func send(msg sock.ByteMessage, subkey map[string]Subscription) {
