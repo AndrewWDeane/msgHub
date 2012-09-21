@@ -24,10 +24,7 @@ import (
 	"ad/msgHub/sock"
 )
 
-// TODO 
-// push batching onto TCP???
-
-var version = "1.9.3"
+var version = "1.10.9"
 var logger *log.Logger = log.New(os.Stdout, "", log.Ldate+log.Lmicroseconds)
 var msgMap map[string]interface{}
 
@@ -48,10 +45,12 @@ func main() {
 
 	df := flag.Int("tcpDelimiter", 10, "TCP message delimiter")
 	tf := flag.Int("tcpPort", 0, "TCP port")
-	bf := flag.Bool("batchOutput", true, "Batch output")
-	bsf := flag.Int("batchSize", 1024, "Output batch size")
-	btf := flag.String("batchTimeout", "1s", "Batch timeout")
-	bbf := flag.Int("batchingBuffer", 1024, "Batch buffer size")
+	tbsf := flag.Int("tcpBatchSize", 1, "TCP output max batch size")
+	ttf := flag.String("tcpBatchTimeout", "1s", "TCP batch timeout. Set tcpBatchSize > 1 to take effect.")
+	bf := flag.Bool("subBatchOutput", true, "Batch subscription output")
+	bsf := flag.Int("subBatchSize", 1024, "Subscription output batch size")
+	btf := flag.String("subBatchTimeout", "1s", "Subscription batch timeout")
+	bbf := flag.Int("subBatchingBuffer", 1024, "Subscription batch buffer size")
 	qf := flag.Bool("quiet", false, "Turn off log output")
 
 	flag.Parse()
@@ -62,6 +61,7 @@ func main() {
 	batchBuffer := *bbf
 	batchSize := *bsf
 	quiet := *qf
+	sock.WriteBatchSize = *tbsf
 
 	var batchingTimeOut time.Duration
 	var err error
@@ -70,12 +70,23 @@ func main() {
 		batchingTimeOut, _ = time.ParseDuration("1s")
 	}
 
+	if sock.WriteBatchSize > 1 {
+		var tcpTimeOut time.Duration
+		if tcpTimeOut, err = time.ParseDuration(*ttf); err == nil {
+			sock.WriteTimeout = tcpTimeOut
+		}
+	}
+
 	hostname, _ := os.Hostname()
 	host, _ := net.LookupHost(hostname)
 	logger.Println("Serving on:", host, tcpPort)
 
 	if batching {
-		logger.Printf("Batching: size %v timeout %v buffer %v\n", batchSize, batchingTimeOut, batchBuffer)
+		logger.Printf("Subscription batching: size %v timeout %v buffer %v\n", batchSize, batchingTimeOut, batchBuffer)
+	}
+
+	if sock.WriteBatchSize > 1 {
+		logger.Printf("TCP batching: size %v timeout %v \n", sock.WriteBatchSize, sock.WriteTimeout)
 	}
 
 	tcp := make(chan sock.ByteMessage, sock.ChannelBuffer)
@@ -163,7 +174,7 @@ func main() {
 
 												batch := Data{Batch: make([]map[string]interface{}, batchSize)}
 												pos := 0
-
+												timeout := time.After(batchingTimeOut)
 												for {
 													select {
 													case m := <-toBatcher:
@@ -182,7 +193,7 @@ func main() {
 															pos = 0
 														}
 
-													case _ = <-time.After(batchingTimeOut):
+													case _ = <-timeout:
 														if batch.Batch[0] != nil {
 															//flush - up to the populated element by slicing
 															batch.Batch = batch.Batch[0:pos]
@@ -191,6 +202,7 @@ func main() {
 															batch.Batch = make([]map[string]interface{}, batchSize)
 															pos = 0
 														}
+														timeout = time.After(batchingTimeOut)
 													}
 												}
 

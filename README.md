@@ -21,11 +21,14 @@ JSON message format:
 
 Built file is linux64
 
-Usage of msgHub:
-  -batchOutput=true: Batch output
-  -batchSize=1024: Output batch size
-  -batchTimeout="1s": Batch timeout
-  -batchingBuffer=1024: Batch buffer size
-  -tcpDelimiter=10: TCP message delimiter
-  -tcpPort=0: TCP port
+Usage of ./msgHub:
+  -quiet=false:             Turn off log output
+  -subBatchOutput=true:     Batch subscription output
+  -subBatchSize=1024:       Subscription output batch size
+  -subBatchTimeout="1s":    Subscription batch timeout
+  -subBatchingBuffer=1024:  Subscription batch buffer size
+  -tcpBatchSize=1:          TCP output max batch size
+  -tcpBatchTimeout="1s":    TCP batch timeout. Set tcpBatchSize > 1 to take effect.
+  -tcpDelimiter=10:         TCP message delimiter
+  -tcpPort=0:               TCP port
 

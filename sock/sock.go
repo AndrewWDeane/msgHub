@@ -6,11 +6,18 @@ import (
 	"errors"
 	"log"
 	"bytes"
+	"time"
 )
 
 var ChannelBuffer = 4096
 var SocketBuffer = 4096
 var Logger *log.Logger
+var WriteBatchSize = 1
+var WriteTimeout time.Duration
+
+func init() {
+	WriteTimeout, _ = time.ParseDuration("1s")
+}
 
 // ByteMessage holds the raw socket bytes, the address of the remote tcp client, and the channel to reply on
 type ByteMessage struct {
@@ -54,7 +61,7 @@ func ServeTCPChannel(addr string, delimiter []byte, toClient chan ByteMessage) e
 				}()
 
 				go ReadTCPChannel(conn, delimiter, fromTCP)
-				WriteTCPChannel(conn, delimiter, toTCP)
+				WriteTCPChannel(conn, delimiter, toTCP, WriteBatchSize, WriteTimeout)
 				// if we get here then write has returned as the connection has dropped on write), so send msg toClient to make client tidy up
 				toClient <- ByteMessage{RemoteAddr: remote, Disconnect: true}
 
@@ -101,21 +108,58 @@ func ReadTCPChannel(conn *net.TCPConn, delimiter []byte, fromSocket chan ByteMes
 }
 
 // Read bytes from caller's channel  and write to tcp socket
-func WriteTCPChannel(conn *net.TCPConn, delimiter []byte, toSocket chan []byte) error {
+func WriteTCPChannel(conn *net.TCPConn, delimiter []byte, toSocket chan []byte, batchSize int, tcpTimeout time.Duration) error {
+	var batch []byte
+	pos := 0
+	timeout := time.After(tcpTimeout)
+
 	for {
-		if message, ok := <-toSocket; !ok {
-			err := errors.New("Error on socket channel")
-			Logger.Println("Closing:", conn.RemoteAddr(), err)
-			conn.Close()
-			return err
-		} else {
-			message = append(message, delimiter...)
-			if _, err := conn.Write(message); err != nil {
-				Logger.Println("Closing write:", conn.RemoteAddr(), err)
+		select {
+
+		case message, ok := <-toSocket:
+			if !ok {
+				err := errors.New("Error on socket channel")
+				Logger.Println("Closing:", conn.RemoteAddr(), err)
 				conn.Close()
 				return err
+			} else {
+				message = append(message, delimiter...)
+
+				if batchSize > 1 {
+					batch = append(batch, message...)
+
+					if pos += 1; pos == batchSize {
+						if _, err := conn.Write(batch); err != nil {
+							Logger.Println("Closing write:", conn.RemoteAddr(), err)
+							conn.Close()
+							return err
+						}
+						batch = nil
+						pos = 0
+					}
+
+				} else {
+					if _, err := conn.Write(message); err != nil {
+						Logger.Println("Closing write:", conn.RemoteAddr(), err)
+						conn.Close()
+						return err
+					}
+				}
+			}
+
+		case _ = <-timeout:
+			if batchSize > 1 {
+				if _, err := conn.Write(batch); err != nil {
+					Logger.Println("Closing write:", conn.RemoteAddr(), err)
+					conn.Close()
+					return err
+				}
+				batch = nil
+				pos = 0
+				timeout = time.After(tcpTimeout)
 			}
 		}
+
 	}
 	return nil
 }
